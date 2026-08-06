@@ -1,0 +1,24 @@
+# --- LLM providers (both free tier) ---
+google-genai            # Gemini: vision enrichment + embeddings
+groq                    # fallback chain: llama-4 vision, llama-3.1-8b-instant
+
+# --- vector store ---
+qdrant-client           # talks to the Qdrant container on :6333
+
+# --- PDF parsing ---
+pymupdf                 # text + bbox, image extraction, tables, page renders
+pillow                  # image filtering (size / colour variance)
+
+# --- keyword search ---
+rank-bm25               # in-process BM25, fused with Qdrant results via RRF
+
+# --- surface ---
+fastapi                 # REST API
+uvicorn[standard]       # ASGI server
+streamlit               # chat UI
+requests                # UI -> API calls
+
+# --- config ---
+python-dotenv           # reads .env
+reportlab 
+python-docx

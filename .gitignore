@@ -1,0 +1,17 @@
+# secrets
+.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# qdrant container storage
+qdrant_storage/
+
+# generated artifacts (extracted images, enrichment cache)
+artifacts/
+extracted_images/
+
+# streamlit
+.streamlit/
