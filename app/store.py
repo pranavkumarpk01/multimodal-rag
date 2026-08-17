@@ -71,6 +71,12 @@ def count():
 # ----------------------------------------------------------------------
 # writing
 # ----------------------------------------------------------------------
+def embedding_text(chunk):
+    """What actually gets turned into a vector."""
+    heading = (chunk.heading or "").strip()
+    return f"{heading}\n{chunk.text}".strip() if heading else chunk.text
+
+
 def index_chunks(chunks, batch_size=None, verbose=True):
     """
     Embed chunks and upsert them. Safe to re-run: point ids are a deterministic
@@ -88,7 +94,10 @@ def index_chunks(chunks, batch_size=None, verbose=True):
 
     for start in range(0, total, batch_size):
         batch = chunks[start:start + batch_size]
-        vectors = embed([c.text for c in batch])
+        # Embed the heading WITH the body. The heading is often the only thing
+        # that gives a short section meaning - "Tools:" above a bare list of
+        # product names. BM25 already searched the heading; now dense does too.
+        vectors = embed([embedding_text(c) for c in batch])
 
         _client.upsert(
             collection_name=config.QDRANT_COLLECTION,

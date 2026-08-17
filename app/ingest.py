@@ -14,6 +14,7 @@ Both routes end in the same place: markdown text that gets chunked, plus
 image records that point at a PNG on disk. One code path from there on.
 """
 
+import hashlib
 import json
 import re
 import statistics
@@ -29,6 +30,11 @@ from app.models import Chunk, IngestResult
 
 # A page with less text than this is treated as a picture of a page.
 TEXT_PAGE_MIN_CHARS = 200
+
+# A section shorter than this is noise (a stray word, a page number).
+# It used to be 15, which silently threw away real content: a "Tools:"
+# heading followed by six product names is only ~10 words.
+MIN_SECTION_WORDS = 4
 
 
 # ----------------------------------------------------------------------
@@ -121,15 +127,19 @@ def chunk_markdown(markdown, max_words=None, overlap=None):
     step = max(max_words - overlap, 1)
     for head, body in sections:
         words = body.split()
-        if not words:
+        if len(words) < MIN_SECTION_WORDS:
             continue
         for start in range(0, len(words), step):
             piece = " ".join(words[start:start + max_words])
-            if len(piece.split()) >= 15 or not chunks:
-                chunks.append((head, piece))
+            chunks.append((head, piece))
             if start + max_words >= len(words):
                 break
     return chunks
+
+
+def image_fingerprint(png_bytes):
+    """Content hash. Two identical PNGs anywhere in the PDF share one."""
+    return hashlib.md5(png_bytes).hexdigest()
 
 
 def figure_to_text(figure):
@@ -151,6 +161,10 @@ def ingest_pdf(pdf_path, verbose=True):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     cache = Cache(out_dir / "enriched.json")
+    # Content hash -> page it first appeared on. Headers, footers and logos
+    # repeat on every page; describing each copy wastes vision quota and
+    # fills the index with near-identical vectors.
+    seen_images = {}
     doc = fitz.open(pdf_path)
     result = IngestResult(doc_id=doc_id, source=str(pdf_path), pages=doc.page_count)
 
@@ -169,7 +183,8 @@ def ingest_pdf(pdf_path, verbose=True):
         render.save(page_png)
 
         if len(raw_text) >= TEXT_PAGE_MIN_CHARS:
-            _ingest_text_page(doc, page, number, doc_id, out_dir, cache, result, verbose)
+            _ingest_text_page(doc, page, number, doc_id, out_dir,
+                              cache, seen_images, result, verbose)
         else:
             _ingest_vision_page(page_png, number, doc_id, cache, result, verbose)
 
@@ -184,7 +199,8 @@ def ingest_pdf(pdf_path, verbose=True):
     return result
 
 
-def _ingest_text_page(doc, page, number, doc_id, out_dir, cache, result, verbose):
+def _ingest_text_page(doc, page, number, doc_id, out_dir,
+                      cache, seen_images, result, verbose):
     """Page has a usable text layer: use it, and enrich figures one by one."""
     result.text_pages += 1
     markdown = page_to_markdown(page)
@@ -196,7 +212,7 @@ def _ingest_text_page(doc, page, number, doc_id, out_dir, cache, result, verbose
             text=text, heading=heading,
         ))
 
-    kept = 0
+    kept = repeated = 0
     for index, info in enumerate(page.get_images(full=True)):
         xref = info[0]
         try:
@@ -211,6 +227,12 @@ def _ingest_text_page(doc, page, number, doc_id, out_dir, cache, result, verbose
             continue
         if flat_colour_ratio(png) > config.MAX_FLAT_COLOUR_RATIO:
             continue
+
+        fingerprint = image_fingerprint(png)
+        if fingerprint in seen_images:
+            repeated += 1
+            continue
+        seen_images[fingerprint] = number
 
         image_path = out_dir / f"page_{number:03d}_img_{index:02d}.png"
         image_path.write_bytes(png)
@@ -229,7 +251,8 @@ def _ingest_text_page(doc, page, number, doc_id, out_dir, cache, result, verbose
         result.images += 1
 
     if verbose:
-        print(f"  page {number:>3}  text   {len(markdown):>6} chars  {kept} images")
+        note = f"  ({repeated} repeated, skipped)" if repeated else ""
+        print(f"  page {number:>3}  text   {len(markdown):>6} chars  {kept} images{note}")
 
 
 def _ingest_vision_page(page_png, number, doc_id, cache, result, verbose):
